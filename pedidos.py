@@ -157,3 +157,89 @@ def nombre_corto(pedido):
     if pedido["producto"] == "tarta":
         return f"Tarta ({pedido['pisos']} piso{'s' if pedido['pisos'] > 1 else ''})"
     return f"{pedido['cantidad']} {pedido['producto']}"
+
+
+
+# ---------- Gestión de pedidos ----------
+
+class GestorPedidos:
+    def __init__(self, dir_datos):
+        self.ruta_pedidos = os.path.join(dir_datos, "pedidos.json")
+        self.ruta_confirmaciones = os.path.join(dir_datos, "confirmaciones.json")
+        self.dir_claves = os.path.join(dir_datos, "claves")
+        self.dir_justificantes = os.path.join(dir_datos, "justificantes")
+
+    # Los AAD se autentican con AES-GCM, pero no se cifran. Vinculan el
+    # contenido con el ID y el cliente, impidiendo intercambiar registros sin detectarlo
+    @staticmethod
+    def _aad_pedido(pedido_id, cliente):
+        return f"sweetsecure|pedido|{pedido_id}|{cliente}".encode("utf-8")
+
+    @staticmethod
+    def _aad_clave(pedido_id, cliente):
+        return f"sweetsecure|clave|{pedido_id}|{cliente}".encode("utf-8")
+
+    def _clave_publica(self, nombre):
+        return cripto.cargar_clave_publica(os.path.join(self.dir_claves, nombre))
+
+    @staticmethod
+    def _requerir_cliente(sesion):
+        if sesion is None or sesion.clave_cliente is None:
+            raise ErrorPermisos("No tienes permisos para realizar esta operación")
+
+    @staticmethod
+    def _requerir_admin(sesion):
+        if sesion is None or not sesion.es_admin():
+            raise ErrorPermisos("No tienes permisos para realizar esta operación")
+
+    # ---------- Información de claves ----------
+
+    def info_firma(self):
+        clave_firma = self._clave_publica("pasteleria_firma_pub.pem")
+        clave_cifrado = self._clave_publica("pasteleria_cifrado_pub.pem")
+        return {
+            "algoritmo_firma": f"ECDSA {clave_firma.curve.name} (P-256) + SHA-256",
+            "bits_firma": clave_firma.curve.key_size,
+            "huella_firma": cripto.huella(clave_firma),
+            "algoritmo_cifrado": "RSA-OAEP con SHA-256",
+            "bits_cifrado": clave_cifrado.key_size,
+            "huella_cifrado": cripto.huella(clave_cifrado),
+        }
+
+    def claves_coherentes(self, sesion):
+        # Detecta si alguien ha sustituido las claves públicas del disco por otras suyas:
+        # deben corresponder a las privadas que el administrador acaba de desbloquear
+        self._requerir_admin(sesion)
+        return (cripto.huella(sesion.clave_firma.public_key()) ==
+                cripto.huella(self._clave_publica("pasteleria_firma_pub.pem")) and
+                cripto.huella(sesion.clave_rsa.public_key()) ==
+                cripto.huella(self._clave_publica("pasteleria_cifrado_pub.pem")))
+
+    # ---------- Crear y listar ----------
+
+    def crear(self, sesion, pedido):
+        self._requerir_cliente(sesion)
+        pedidos = leer_json(self.ruta_pedidos)
+        pedido_id = secrets.token_hex(8)
+        while pedido_id in pedidos:
+            pedido_id = secrets.token_hex(8)
+
+        # Cifrado híbrido: los datos se cifran con una clave AES nueva por pedido;
+        # esa clave se protege de dos formas para que accedan cliente y pastelería
+        clave_pedido = cripto.generar_clave_aes()
+        datos = json.dumps(pedido, ensure_ascii=False).encode("utf-8")
+        cliente = sesion.username
+
+        pedidos[pedido_id] = {
+            "cliente": cliente,
+            "creado": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "datos": cripto.cifrar_aes_gcm(clave_pedido, datos, self._aad_pedido(pedido_id, cliente)),
+            # Copia de la clave para el cliente, cifrada con la clave derivada de su contraseña
+            "clave_cliente": cripto.cifrar_aes_gcm(sesion.clave_cliente, clave_pedido,
+                                                   self._aad_clave(pedido_id, cliente)),
+            # Copia de la clave para la pastelería, cifrada con su clave pública RSA
+            "clave_pasteleria": cripto.envolver_clave_rsa(
+                self._clave_publica("pasteleria_cifrado_pub.pem"), clave_pedido),
+        }
+        guardar_json(self.ruta_pedidos, pedidos)
+        return pedido_id
