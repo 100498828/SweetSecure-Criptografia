@@ -341,3 +341,105 @@ class TestValidacionEntradas(BaseSweetSecure):
         with self.assertRaises(cripto.FirmaInvalida):
             self.pedidos.verificar_fichero(self.ana, ruta, pedido_id)
 
+
+class TestCatalogoYCampos(BaseSweetSecure):
+    def test_nuevas_coberturas_y_rellenos(self):
+        self.assertEqual(len(CATALOGO["tarta"]["bizcocho"]), 6)
+        self.assertEqual(len(CATALOGO["tarta"]["cobertura"]), 4)
+        self.assertEqual(len(CATALOGO["tarta"]["relleno"]), 8)
+        for cobertura in ("Fondant", "Crema de queso"):
+            tarta = construir_tarta("Canela", cobertura, "Dulce de leche", 1, "", fecha_valida())
+            self.assertEqual(tarta["cobertura"], cobertura)
+        with self.assertRaises(ErrorPedido):
+            construir_tarta("Canela", "Fondant", "Mermelada de naranja amarga", 1, "", fecha_valida())
+
+    def test_cantidad_se_escribe_directamente(self):
+        for texto, valor in (("6", 6), ("12", 12), (" 24 ", 24)):
+            self.assertEqual(parsear_cantidad(texto), valor)
+        for incorrecto in ("1", "7", "doce", "", "-6"):
+            with self.assertRaises(ErrorPedido):
+                parsear_cantidad(incorrecto)
+
+    def test_fecha_en_formato_espanol(self):
+        dentro = date.today() + timedelta(days=10)
+        self.assertEqual(parsear_fecha(dentro.strftime("%d/%m/%Y")), dentro.isoformat())
+        self.assertEqual(fecha_es(dentro.isoformat()), dentro.strftime("%d/%m/%Y"))
+        self.assertEqual(euros(1234.5), "1.234,50 €")
+
+    def test_fechas_incorrectas_con_mensaje_explicativo(self):
+        casos = {"31/02/2027": "no existe", (date.today() + timedelta(days=5)).isoformat(): "Formato",
+                 "5/13/2026": "no existe", date.today().strftime("%d/%m/%Y"): "entre el",
+                 (date.today() + timedelta(days=91)).strftime("%d/%m/%Y"): "entre el"}
+        for fecha, texto in casos.items():
+            with self.assertRaises(ErrorPedido) as e:
+                parsear_fecha(fecha)
+            self.assertIn(texto, str(e.exception))
+
+
+class TestAsistenteYSeleccion(BaseSweetSecure):
+    """Simula lo que escribe el usuario en la terminal."""
+
+    def setUp(self):
+        super().setUp()
+        main.configurar(self.dir)
+
+    def ui(self, funcion, entradas, *args):
+        with patch("builtins.input", side_effect=entradas), patch.object(interfaz, "limpiar"), \
+                patch.object(interfaz, "pausa"), redirect_stdout(io.StringIO()):
+            return funcion(*args)
+
+    def test_cancelar_no_guarda_nada(self):
+        # Tarta, bizcocho, cobertura y después 0 para cancelar
+        resultado = self.ui(main.nuevo_pedido, ["1", "2", "3", "0"], self.ana)
+        self.assertIsNone(resultado)
+        self.assertEqual(leer_json(self.ruta("pedidos.json")), {})
+
+    def test_cancelar_desde_el_resumen(self):
+        entradas = ["2", "1", "6", fecha_valida(), "3"]
+        self.assertIsNone(self.ui(main.nuevo_pedido, entradas, self.ana))
+        self.assertEqual(leer_json(self.ruta("pedidos.json")), {})
+
+    def test_fecha_erronea_conserva_el_resto_del_pedido(self):
+        entradas = ["1", "2", "3", "2", "2", "Feliz cumple",
+                    "31/02/2027", "2026-11-20", "01/01/2020", fecha_valida(), "1"]
+        pedido_id = self.ui(main.nuevo_pedido, entradas, self.ana)
+        pedido = self.pedidos.mis_pedidos(self.ana)[0]["pedido"]
+        self.assertIsNotNone(pedido_id)
+        self.assertEqual((pedido["bizcocho"], pedido["cobertura"], pedido["relleno"], pedido["pisos"]),
+                         ("Chocolate oscuro", "Fondant", "Caramelo salado", 2))
+        self.assertEqual(pedido["mensaje"], "Feliz cumple")
+
+    def test_cantidad_erronea_se_vuelve_a_pedir(self):
+        entradas = ["2", "4", "1", "7", "12", fecha_valida(), "1"]
+        self.ui(main.nuevo_pedido, entradas, self.ana)
+        pedido = self.pedidos.mis_pedidos(self.ana)[0]["pedido"]
+        self.assertEqual((pedido["sabor"], pedido["cantidad"], pedido["precio"]), ("Limón", 12, 30.0))
+
+    def test_volver_al_paso_anterior(self):
+        entradas = ["3", "1", "V", "2", "6", fecha_valida(), "1"]
+        self.ui(main.nuevo_pedido, entradas, self.ana)
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["pedido"]["sabor"], "Mantequilla")
+
+    def test_modificar_un_dato_desde_el_resumen(self):
+        # Se piden 6 galletas y, en el resumen, se cambia solo la cantidad a 24
+        entradas = ["3", "1", "6", fecha_valida(), "2", "3", "24", "1"]
+        self.ui(main.nuevo_pedido, entradas, self.ana)
+        pedido = self.pedidos.mis_pedidos(self.ana)[0]["pedido"]
+        self.assertEqual((pedido["sabor"], pedido["cantidad"]), ("Pepitas de chocolate", 24))
+
+    def test_seleccion_de_pedidos_por_numero(self):
+        id1 = self.pedidos.crear(self.ana, tarta_ejemplo())
+        id2 = self.pedidos.crear(self.ana, construir_caja("galletas", "Mantequilla", 6, fecha_valida()))
+        lista = self.pedidos.mis_pedidos(self.ana)
+        self.assertEqual({p["id"] for p in lista}, {id1, id2})
+        # Un número fuera de rango se rechaza y se vuelve a pedir
+        elegido = self.ui(main.elegir_pedido, ["9", "abc", "2"], lista, "Pedidos")
+        self.assertEqual(elegido, lista[1]["id"])
+        self.assertIsNone(self.ui(main.elegir_pedido, ["0"], lista, "Pedidos"))
+
+    def test_admin_confirma_eligiendo_numero(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        self.ui(main.confirmar_pedido, ["1"], self.admin)
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], CONFIRMADO)
+        self.assertEqual(self.pedidos.verificar_guardada(self.ana, pedido_id)["pedido_id"], pedido_id)
+
