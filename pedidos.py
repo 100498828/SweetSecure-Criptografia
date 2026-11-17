@@ -243,3 +243,55 @@ class GestorPedidos:
         }
         guardar_json(self.ruta_pedidos, pedidos)
         return pedido_id
+
+
+    def _descifrar(self, sesion, pedido_id, registro):
+        # El administrador recupera la clave AES mediante RSA; su propietario,
+        # con la clave derivada de su contraseña. Otros clientes no pueden acceder
+        cliente = registro["cliente"]
+        if sesion.es_admin():
+            clave_pedido = cripto.desenvolver_clave_rsa(sesion.clave_rsa, registro["clave_pasteleria"])
+        elif cliente == sesion.username:
+            clave_pedido = cripto.descifrar_aes_gcm(sesion.clave_cliente, registro["clave_cliente"],
+                                                    self._aad_clave(pedido_id, cliente))
+        else:
+            raise ErrorPermisos("No tienes permisos para realizar esta operación")
+        datos = cripto.descifrar_aes_gcm(clave_pedido, registro["datos"], self._aad_pedido(pedido_id, cliente))
+        return json.loads(datos.decode("utf-8"))
+
+    def _estado(self, pedido_id, cliente, confirmaciones):
+        # El estado se deduce de la existencia y validez de la confirmación
+        # firmada: sin confirmación, el pedido sigue PENDIENTE.
+        if pedido_id not in confirmaciones:
+            return PENDIENTE
+        try:
+            self.verificar(confirmaciones[pedido_id], pedido_id, cliente)
+            return CONFIRMADO
+        except cripto.FirmaInvalida:
+            return MANIPULADO
+
+    def _listar(self, sesion, registros):
+        confirmaciones = leer_json(self.ruta_confirmaciones)
+        resultado = []
+        for pedido_id, registro in registros:
+            item = {"id": pedido_id, "cliente": registro.get("cliente"), "creado": registro.get("creado"),
+                    "pedido": None, "error": None, "estado": ERROR_INTEGRIDAD}
+            try:
+                item["pedido"] = self._descifrar(sesion, pedido_id, registro)
+                item["estado"] = self._estado(pedido_id, registro["cliente"], confirmaciones)
+            except (cripto.ErrorIntegridad, KeyError, ValueError, TypeError) as e:
+                # Un pedido manipulado se marca como rechazado y no se muestra su contenido
+                item["error"] = str(e)
+            resultado.append(item)
+        return sorted(resultado, key=lambda p: p["creado"] or "")
+
+    def mis_pedidos(self, sesion, estado=None):
+        self._requerir_cliente(sesion)
+        registros = [(i, r) for i, r in leer_json(self.ruta_pedidos).items() if r.get("cliente") == sesion.username]
+        lista = self._listar(sesion, registros)
+        return [p for p in lista if estado is None or p["estado"] == estado]
+
+    def todos(self, sesion, estado=None):
+        self._requerir_admin(sesion)
+        lista = self._listar(sesion, leer_json(self.ruta_pedidos).items())
+        return [p for p in lista if estado is None or p["estado"] == estado]
