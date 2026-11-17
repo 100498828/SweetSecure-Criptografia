@@ -301,3 +301,61 @@ def nuevo_pedido(sesion):
     ui.pausa()
     return pedido_id
 
+
+# ---------- Listados y selección de pedidos ----------
+
+NOMBRE_ESTADO = {PENDIENTE: "PENDIENTE", CONFIRMADO: "CONFIRMADO", MANIPULADO: "JUSTIFICANTE MANIPULADO"}
+
+
+def _estado(item):
+    estado = item["estado"]
+    return ui.color_estado(estado) + NOMBRE_ESTADO.get(estado, estado) + ui.FIN
+
+
+def describir(item, con_cliente=False):
+    producto = nombre_corto(item["pedido"]) if item["pedido"] else "Contenido no disponible"
+    cliente = f" · {item['cliente']}" if con_cliente else ""
+    return f"{item['id']}{cliente} · {producto} · {_estado(item)}"
+
+
+def mostrar_pedidos(lista, con_cliente=False):
+    if not lista:
+        ui.aviso("No hay pedidos todavía.")
+    for n, item in enumerate(lista, 1):
+        ui.seccion(f"{n}. Pedido nº {item['id']}")
+        if con_cliente:
+            ui.campo("Cliente", item["cliente"])
+        if item["pedido"] is None:
+            ui.campo("Estado", "RECHAZADO: información manipulada", ui.color_estado(MANIPULADO))
+            ui.texto(ui.ERROR + item["error"] + ui.FIN)
+            continue
+        ui.campo("Producto", resumen(item["pedido"]))
+        ui.campo("Fecha de recogida", fecha_es(item["pedido"]["fecha_recogida"]))
+        ui.campo("Total", euros(item["pedido"]["precio"]))
+        ui.campo("Estado", NOMBRE_ESTADO.get(item["estado"], item["estado"]), ui.color_estado(item["estado"]))
+
+
+def elegir_pedido(lista, etiqueta, con_cliente=False, vacio="No hay pedidos disponibles para esta operación."):
+    if not lista:
+        ui.aviso(vacio)
+        return None
+    item = ui.elegir_de_lista(etiqueta, lista, lambda p: describir(p, con_cliente))
+    return item["id"] if item else None
+
+
+def agrupar(huella):
+    return " ".join(huella[i:i + 4] for i in range(0, len(huella), 4))
+
+
+def mostrar_justificante(contenido):
+    ui.seccion("JUSTIFICANTE DE COMPRA — SWEETSECURE")
+    ui.campo("Número de pedido", contenido["pedido_id"])
+    ui.campo("Cliente", contenido["cliente"])
+    ui.campo("Producto", contenido["resumen"])
+    ui.campo("Importe total", euros(contenido["total_eur"]))
+    ui.campo("Fecha de recogida", fecha_es(contenido["fecha_recogida"]))
+    ui.campo("Estado", contenido["estado"], ui.color_estado(CONFIRMADO))
+    ui.campo("Fecha de emisión", fecha_hora_es(contenido["emitida"]))
+    ui.campo("Firma digital", "VÁLIDA (ECDSA P-256 + SHA-256)", ui.color_estado(CONFIRMADO))
+    ui.campo("Huella de la clave", agrupar(pedidos.info_firma()["huella_firma"]))
+
