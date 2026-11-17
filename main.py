@@ -12,6 +12,7 @@ from pedidos import (CANTIDADES, CATALOGO, CONFIRMADO, DIAS_MAX_RECOGIDA, DIAS_M
                      parsear_fecha, resumen, validar_mensaje)
 from usuarios import ROL_ADMIN, ErrorAutenticacion, ErrorUsuario, GestorUsuarios, errores_password
 
+# Permite cambiar la carpeta de datos (por ejemplo, para las pruebas) sin modificar el código
 DIR_DATOS = os.environ.get("SWEETSECURE_DATOS", "data")
 MAX_INTENTOS = 3
 
@@ -24,11 +25,13 @@ def configurar(dir_datos):
     usuarios, pedidos = GestorUsuarios(dir_datos), GestorPedidos(dir_datos)
 
 
+# El modo demostración muestra operaciones y parámetros públicos, nunca claves secretas
 def activar_demo(activo):
     cripto.DEBUG = activo
     cripto.salida_log = ui.log_tecnico
 
 
+# Los fallos de firma e integridad se muestran como rechazos, no como operaciones correctas.
 def mostrar_error(e):
     if isinstance(e, cripto.FirmaInvalida):
         ui.error("Firma digital inválida. El justificante ha sido rechazado.")
@@ -44,7 +47,7 @@ ERRORES = (cripto.FirmaInvalida, cripto.ErrorIntegridad, cripto.ErrorClave, Erro
 
 
 def ejecutar(accion, *args):
-    """Ejecuta una operación y traduce cualquier error a un mensaje comprensible."""
+    # Ejecuta una operación y traduce cualquier error a un mensaje comprensible.
     try:
         return accion(*args)
     except ERRORES as e:
@@ -63,6 +66,7 @@ def pantalla(accion, *args):
 
 # ---------- Inicio, registro y login ----------
 
+# getpass evita mostrar la contraseña mientras se escribe; después se valida su robustez
 def pedir_password_nueva():
     while True:
         password = getpass("\n  Contraseña (no se muestra al escribir)\n  › ")
@@ -76,16 +80,17 @@ def pedir_password_nueva():
         return password
 
 
+# El primer arranque crea la cuenta administradora y sus pares de claves protegidas
 def configuracion_inicial():
     ui.cabecera("Configuración inicial de la pastelería")
-    ui.texto("Todavía no hay administradora. Se creará ahora junto con las claves de cifrado "
+    ui.texto("Todavía no hay administrador/a. Se creará ahora junto con las claves de cifrado "
              "y de firma de la pastelería. Su contraseña protege también las claves privadas.")
     while True:
-        username = ui.pedir("Usuario de la administradora:")
+        username = ui.pedir("Usuario de administrador/a:")
         password = pedir_password_nueva()
         try:
             usuarios.registrar(username, password, rol=ROL_ADMIN)
-            ui.ok(f"Administradora '{username}' creada y claves generadas")
+            ui.ok(f"Administrador/a '{username}' creado/a y claves generadas")
             ui.campo("Huella de firma", agrupar(pedidos.info_firma()["huella_firma"]))
             ui.texto("Anota esta huella: los clientes pueden compararla con la que publique la pastelería.")
             ui.pausa()
@@ -112,6 +117,7 @@ def registrarse():
     ui.pausa()
 
 
+# Los intentos de inicio de sesión se limitan a tres por ejecución de este flujo
 def iniciar_sesion():
     ui.cabecera("Iniciar sesión")
     for intento in range(1, MAX_INTENTOS + 1):
@@ -222,7 +228,7 @@ def _mostrar_borrador(datos):
 
 
 def _asistente(datos, desde=0):
-    """Recorre los pasos del pedido. V vuelve al anterior; 0 cancela (lanza Cancelado)."""
+    # Recorre los pasos del pedido. V vuelve al anterior; 0 cancela (lanza Cancelado)
     i = desde
     while i < len(_pasos(datos)):
         pasos = _pasos(datos)
@@ -246,6 +252,7 @@ def _construir(datos):
     return construir_caja(datos["producto"], datos["sabor"], datos["cantidad"], datos["fecha"])
 
 
+# No se cifra ni guarda el pedido hasta que el cliente confirma el resumen final
 def nuevo_pedido(sesion):
     datos = {}
     try:
@@ -347,6 +354,7 @@ def agrupar(huella):
     return " ".join(huella[i:i + 4] for i in range(0, len(huella), 4))
 
 
+# Esta pantalla solo debe recibir justificantes cuya firma ya se haya verificado
 def mostrar_justificante(contenido):
     ui.seccion("JUSTIFICANTE DE COMPRA — SWEETSECURE")
     ui.campo("Número de pedido", contenido["pedido_id"])
@@ -388,6 +396,7 @@ def descargar_justificante(sesion):
     ui.pausa()
 
 
+# Se verifica tanto la firma del fichero exportado como su asociación al pedido seleccionado
 def comprobar_autenticidad(sesion):
     ui.cabecera("Comprobar autenticidad de un justificante")
     ui.texto(f"Los justificantes descargados están en la carpeta: {os.path.abspath(pedidos.dir_justificantes)}")
@@ -427,7 +436,7 @@ def menu_cliente(sesion):
         pantalla(accion, sesion)
 
 
-# ---------- Administradora ----------
+# ---------- Administrador/a ----------
 
 def ver_pedidos_clientes(sesion):
     ui.cabecera("Pedidos de clientes")
@@ -440,6 +449,7 @@ def ver_pedidos_clientes(sesion):
     ui.pausa()
 
 
+# Solo el administrador confirma: el gestor descifra y verifica el pedido antes de firmarlo
 def confirmar_pedido(sesion):
     ui.cabecera("Confirmar pedido")
     pedido_id = elegir_pedido(pedidos.todos(sesion, PENDIENTE), "Pedidos pendientes", con_cliente=True,
@@ -462,6 +472,7 @@ def verificar_justificante_admin(sesion):
     ui.pausa()
 
 
+# Las huellas permiten comparar claves públicas, pero no sustituyen a un certificado digital
 def info_firma(sesion):
     ui.cabecera("Información de firma digital")
     info = pedidos.info_firma()
@@ -479,7 +490,7 @@ def info_firma(sesion):
     else:
         ui.error("Las claves públicas del disco NO corresponden a las privadas: han sido sustituidas")
     print()
-    ui.texto("Las claves privadas están cifradas con la contraseña de la administradora (PKCS#8) y nunca se "
+    ui.texto("Las claves privadas están cifradas con la contraseña de la cuenta administradora (PKCS#8) y nunca se "
              "muestran. La huella permite a los clientes comparar la clave pública con la que publica la "
              "pastelería, pero no es un certificado: no hay una autoridad que la vincule con su identidad.")
     ui.pausa()
@@ -501,6 +512,7 @@ def menu_admin(sesion):
         pantalla(accion, sesion)
 
 
+# Antes de continuar se comprueba si las claves públicas guardadas coinciden con las privadas
 def entrar_admin(sesion):
     if not pedidos.claves_coherentes(sesion):
         ui.cabecera("Alerta de seguridad")
@@ -516,6 +528,7 @@ def modo_actual():
     return "[MODO DEMOSTRACIÓN CRIPTOGRÁFICA]" if cripto.DEBUG else ""
 
 
+# Punto de entrada: inicialización, autenticación y acceso a menús según el rol
 def main():
     activar_demo(os.environ.get("SWEETSECURE_DEMO") == "1")
     try:
