@@ -1,4 +1,4 @@
-"""Lectura y escritura de los ficheros JSON de la aplicación."""
+"""Lectura y escritura de los ficheros JSON de la aplicación"""
 
 import json
 import os
@@ -16,6 +16,7 @@ def leer_json(ruta):
             contenido = f.read().strip()
             return json.loads(contenido) if contenido else {}
     except (json.JSONDecodeError, OSError) as e:
+        # Si el fichero está dañado o no se puede leer, se informa del error
         raise ErrorAlmacen(f"No se puede leer {os.path.basename(ruta)}: fichero dañado") from e
 
 
