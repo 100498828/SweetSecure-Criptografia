@@ -264,3 +264,80 @@ class TestFirma(BaseSweetSecure):
         with self.assertRaises(cripto.ErrorIntegridad):
             self.pedidos.confirmar(self.admin, pedido_id)
 
+
+class TestClavesYPermisos(BaseSweetSecure):
+    def test_claves_privadas_cifradas(self):
+        for nombre in ("pasteleria_cifrado_priv.pem", "pasteleria_firma_priv.pem"):
+            with open(os.path.join(self.dir, "claves", nombre), "rb") as f:
+                self.assertIn(b"BEGIN ENCRYPTED PRIVATE KEY", f.read())
+            with self.assertRaises(cripto.ErrorClave):
+                cripto.cargar_clave_privada(os.path.join(self.dir, "claves", nombre), "Incorrecta#1")
+
+    def test_parametros_de_claves(self):
+        clave_rsa = cripto.cargar_clave_publica(os.path.join(self.dir, "claves", "pasteleria_cifrado_pub.pem"))
+        clave_ec = cripto.cargar_clave_publica(os.path.join(self.dir, "claves", "pasteleria_firma_pub.pem"))
+        self.assertEqual(clave_rsa.key_size, 3072)
+        self.assertEqual(clave_ec.curve.name, "secp256r1")
+
+    def test_cliente_no_puede_firmar(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        with self.assertRaises(ErrorPermisos):
+            self.pedidos.confirmar(self.ana, pedido_id)
+
+    def test_cliente_no_puede_ver_todos(self):
+        with self.assertRaises(ErrorPermisos):
+            self.pedidos.todos(self.ana)
+
+    def test_cliente_no_ve_pedidos_de_otro(self):
+        pedido_id = self.pedido_confirmado()
+        self.assertEqual(self.pedidos.mis_pedidos(self.luis), [])
+        with self.assertRaises(ErrorPermisos):
+            self.pedidos.verificar_guardada(self.luis, pedido_id)
+
+    def test_cambiar_rol_en_fichero_no_da_acceso(self):
+        datos = leer_json(self.ruta("usuarios.json"))
+        datos["luis"]["rol"] = ROL_ADMIN
+        guardar_json(self.ruta("usuarios.json"), datos)
+        # Sin la contraseña que protege las claves privadas no se puede iniciar sesión como admin
+        with self.assertRaises(ErrorAutenticacion):
+            self.usuarios.autenticar("luis", PASS_LUIS)
+
+    def test_segundo_admin_rechazado(self):
+        with self.assertRaises(ErrorUsuario):
+            self.usuarios.registrar("otroadmin", PASS_LUIS, rol=ROL_ADMIN)
+
+
+class TestValidacionEntradas(BaseSweetSecure):
+    def test_opciones_invalidas(self):
+        with self.assertRaises(ErrorPedido):
+            construir_tarta("Fresa", "Ganache de chocolate", "Caramelo", 1, "", fecha_valida())
+        with self.assertRaises(ErrorPedido):
+            construir_tarta("Vainilla", "Ganache de chocolate", "Caramelo", 4, "", fecha_valida())
+        with self.assertRaises(ErrorPedido):
+            construir_caja("galletas", "Mantequilla", 7, fecha_valida())
+
+    def test_fechas_invalidas(self):
+        for fecha in ["01/01/2020", "mañana", (date.today() + timedelta(days=400)).strftime("%d/%m/%Y")]:
+            with self.assertRaises(ErrorPedido):
+                construir_caja("cupcakes", "Vainilla", 6, fecha)
+
+    def test_mensaje_demasiado_largo(self):
+        with self.assertRaises(ErrorPedido):
+            construir_tarta("Vainilla", "Buttercream suizo", "Caramelo", 1, "x" * 61, fecha_valida())
+
+    def test_precio(self):
+        self.assertEqual(tarta_ejemplo()["precio"], 58.0)
+        self.assertEqual(construir_caja("galletas", "Mantequilla", 12, fecha_valida())["precio"], 18.0)
+
+    def test_fichero_de_confirmacion_corrupto(self):
+        pedido_id = self.pedido_confirmado()
+        ruta = os.path.join(self.dir, "corrupto.json")
+        with open(ruta, "w") as f:
+            f.write("{no es json")
+        with self.assertRaises(ErrorPedido):
+            self.pedidos.verificar_fichero(self.ana, ruta, pedido_id)
+        with open(ruta, "w") as f:
+            json.dump({"contenido": {}}, f)
+        with self.assertRaises(cripto.FirmaInvalida):
+            self.pedidos.verificar_fichero(self.ana, ruta, pedido_id)
+
