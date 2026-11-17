@@ -55,3 +55,49 @@ def errores_password(password):
 def validar_username(username):
     if not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
         raise ErrorUsuario("El usuario debe tener entre 3 y 20 caracteres (letras, números o _)")
+
+
+class GestorUsuarios:
+    def __init__(self, dir_datos):
+        self.ruta = os.path.join(dir_datos, "usuarios.json")
+        self.dir_claves = os.path.join(dir_datos, "claves")
+
+    def existe(self, username):
+        return username in leer_json(self.ruta)
+
+    def existe_admin(self):
+        return any(u["rol"] == ROL_ADMIN for u in leer_json(self.ruta).values())
+
+    def registrar(self, username, password, rol=ROL_CLIENTE):
+        validar_username(username)
+        errores = errores_password(password)
+        if errores:
+            raise ErrorUsuario("Contraseña poco robusta: " + ", ".join(errores))
+
+        usuarios = leer_json(self.ruta)
+        if username in usuarios:
+            raise ErrorUsuario("No se ha podido completar el registro con ese nombre de usuario")
+        if rol == ROL_ADMIN and self.existe_admin():
+            raise ErrorUsuario("Ya existe un administrador")
+
+        # Se generan dos sales aleatorias e independientes: una para
+        # verificar la contraseña y otra para derivar la clave de cifrado.
+        sal_login = cripto.generar_sal()
+        sal_cifrado = cripto.generar_sal()
+        iteraciones = cripto.PBKDF2_ITERACIONES
+
+        # Se almacena el resultado de PBKDF2, nunca la contraseña original.
+        # Las sales no son secretas y permiten repetir la derivación al iniciar sesión.
+        usuarios[username] = {
+            "rol": rol,
+            "iteraciones": iteraciones,
+            "sal_login": cripto.a_b64(sal_login),
+            "hash": cripto.a_b64(cripto.hash_password(password, sal_login, iteraciones)),
+            "sal_cifrado": cripto.a_b64(sal_cifrado),
+        }
+
+        if rol == ROL_ADMIN:
+            cripto.generar_claves_pasteleria(self.dir_claves, password)
+        guardar_json(self.ruta, usuarios)
+
+    
