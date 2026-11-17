@@ -443,3 +443,107 @@ class TestAsistenteYSeleccion(BaseSweetSecure):
         self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], CONFIRMADO)
         self.assertEqual(self.pedidos.verificar_guardada(self.ana, pedido_id)["pedido_id"], pedido_id)
 
+
+class TestEstadoYPersistencia(BaseSweetSecure):
+    def test_persistencia_tras_reiniciar(self):
+        pedido_id = self.pedido_confirmado()
+        # Nuevos objetos sobre la misma carpeta: equivale a cerrar y volver a abrir la aplicación
+        usuarios2, pedidos2 = GestorUsuarios(self.dir), GestorPedidos(self.dir)
+        ana2 = usuarios2.autenticar("ana", PASS_ANA)
+        admin2 = usuarios2.autenticar("admin", PASS_ADMIN)
+        self.assertEqual(pedidos2.mis_pedidos(ana2)[0]["pedido"], tarta_ejemplo())
+        self.assertEqual(pedidos2.todos(admin2)[0]["estado"], CONFIRMADO)
+        self.assertEqual(pedidos2.verificar_guardada(ana2, pedido_id)["cliente"], "ana")
+
+    def test_estado_depende_del_justificante_firmado(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], PENDIENTE)
+        self.pedidos.confirmar(self.admin, pedido_id)
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], CONFIRMADO)
+        confirmaciones = leer_json(self.ruta("confirmaciones.json"))
+        confirmaciones[pedido_id]["contenido"]["total_eur"] = 1.0
+        guardar_json(self.ruta("confirmaciones.json"), confirmaciones)
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], MANIPULADO)
+
+    def test_editar_estado_en_el_fichero_no_confirma(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        datos = leer_json(self.ruta("pedidos.json"))
+        datos[pedido_id]["estado"] = "CONFIRMADO"
+        guardar_json(self.ruta("pedidos.json"), datos)
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], PENDIENTE)
+        with self.assertRaises(ErrorPedido):
+            self.pedidos.verificar_guardada(self.ana, pedido_id)
+
+    def test_fallo_al_guardar_no_deja_estado_inconsistente(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        with patch("pedidos.guardar_json", side_effect=OSError("disco lleno")):
+            with self.assertRaises(OSError):
+                self.pedidos.confirmar(self.admin, pedido_id)
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], PENDIENTE)
+        self.pedidos.confirmar(self.admin, pedido_id)
+        self.assertEqual(self.pedidos.mis_pedidos(self.ana)[0]["estado"], CONFIRMADO)
+
+    def test_clave_publica_sustituida_se_detecta(self):
+        self.assertTrue(self.pedidos.claves_coherentes(self.admin))
+        otra = cripto.ec.generate_private_key(cripto.CURVA_FIRMA)
+        cripto._guardar_publica(otra.public_key(), os.path.join(self.dir, "claves", "pasteleria_firma_pub.pem"))
+        self.assertFalse(self.pedidos.claves_coherentes(self.admin))
+
+
+class TestJustificantesYPermisos(BaseSweetSecure):
+    def test_justificante_descargado_y_verificado(self):
+        pedido_id = self.pedido_confirmado()
+        ruta = self.pedidos.exportar(self.ana, pedido_id)
+        self.assertTrue(ruta.endswith(f"justificante_{pedido_id}.json"))
+        self.assertEqual(self.pedidos.verificar_fichero(self.ana, ruta, pedido_id)["total_eur"], 58.0)
+
+    def test_justificante_manipulado_no_se_descarga(self):
+        pedido_id = self.pedido_confirmado()
+        confirmaciones = leer_json(self.ruta("confirmaciones.json"))
+        confirmaciones[pedido_id]["contenido"]["fecha_recogida"] = "2030-01-01"
+        guardar_json(self.ruta("confirmaciones.json"), confirmaciones)
+        with self.assertRaises(cripto.FirmaInvalida):
+            self.pedidos.exportar(self.ana, pedido_id)
+
+    def test_cliente_no_descarga_justificante_ajeno(self):
+        pedido_id = self.pedido_confirmado()
+        with self.assertRaises(ErrorPermisos):
+            self.pedidos.exportar(self.luis, pedido_id)
+        with self.assertRaises(ErrorPermisos):
+            self.pedidos.verificar_fichero(self.luis, "cualquiera.json", pedido_id)
+
+    def test_cliente_no_obtiene_info_de_claves_privadas(self):
+        with self.assertRaises(ErrorPermisos):
+            self.pedidos.claves_coherentes(self.ana)
+
+
+class TestModoDemostracion(BaseSweetSecure):
+    def test_modo_demo_no_muestra_secretos(self):
+        registro = []
+        cripto.DEBUG, cripto.salida_log = True, registro.append
+        try:
+            ana = self.usuarios.autenticar("ana", PASS_ANA)
+            pedido_id = self.pedidos.crear(ana, tarta_ejemplo())
+            self.pedidos.confirmar(self.admin, pedido_id)
+            self.pedidos.verificar_guardada(ana, pedido_id)
+        finally:
+            cripto.DEBUG, cripto.salida_log = False, print
+        texto = "\n".join(registro)
+        self.assertIn("AES-256-GCM", texto)
+        self.assertIn("ECDSA", texto)
+        self.assertNotIn(PASS_ANA, texto)
+        self.assertNotIn(ana.clave_cliente.hex(), texto)
+        self.assertNotIn(cripto.a_b64(ana.clave_cliente), texto)
+
+    def test_modo_normal_no_muestra_nada_tecnico(self):
+        registro = []
+        cripto.salida_log = registro.append
+        try:
+            self.pedidos.crear(self.ana, tarta_ejemplo())
+        finally:
+            cripto.salida_log = print
+        self.assertEqual(registro, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
