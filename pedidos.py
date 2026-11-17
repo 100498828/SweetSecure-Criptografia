@@ -295,3 +295,87 @@ class GestorPedidos:
         self._requerir_admin(sesion)
         lista = self._listar(sesion, leer_json(self.ruta_pedidos).items())
         return [p for p in lista if estado is None or p["estado"] == estado]
+
+
+
+    # ---------- Justificantes firmados ----------
+
+    def confirmar(self, sesion, pedido_id):
+        self._requerir_admin(sesion)
+        registro = leer_json(self.ruta_pedidos).get(pedido_id)
+        if registro is None:
+            raise ErrorPedido("No existe ese pedido")
+        confirmaciones = leer_json(self.ruta_confirmaciones)
+        if pedido_id in confirmaciones:
+            raise ErrorPedido("El pedido ya está confirmado")
+
+        # Antes de firmar se verifica el tag de AES-GCM: no se confirma
+        # un pedido cuyo contenido cifrado haya sido manipulado
+        pedido = self._descifrar(sesion, pedido_id, registro)
+        contenido = {
+            "pedido_id": pedido_id,
+            "cliente": registro["cliente"],
+            "resumen": resumen(pedido),
+            "total_eur": pedido["precio"],
+            "fecha_recogida": pedido["fecha_recogida"],
+            "estado": CONFIRMADO,
+            "emitida": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        # Firma ECDSA sobre una representación canónica de los datos,
+        # para que firmar y verificar empleen exactamente los mismos bytes
+        confirmacion = {
+            "contenido": contenido,
+            "algoritmo": "ECDSA-P256-SHA256",
+            "firma": cripto.firmar(sesion.clave_firma, cripto.bytes_canonicos(contenido)),
+        }
+        confirmaciones[pedido_id] = confirmacion
+        # El estado se deriva de esta confirmación: si no se llega a guardar,
+        # el pedido sigue PENDIENTE (no se modifica pedidos.json)
+        guardar_json(self.ruta_confirmaciones, confirmaciones)
+        return confirmacion
+
+    def _comprobar_acceso(self, sesion, pedido_id):
+        registro = leer_json(self.ruta_pedidos).get(pedido_id)
+        if registro is None:
+            raise ErrorPedido("No existe ese pedido")
+        if not sesion.es_admin() and registro["cliente"] != sesion.username:
+            raise ErrorPermisos("No tienes permisos para realizar esta operación")
+        return registro
+
+    def verificar(self, confirmacion, pedido_id, cliente):
+        try:
+            contenido = confirmacion["contenido"]
+            firma = confirmacion["firma"]
+        except (KeyError, TypeError):
+            raise cripto.FirmaInvalida("El justificante no tiene el formato esperado")
+        cripto.verificar_firma(self._clave_publica("pasteleria_firma_pub.pem"),
+                               cripto.bytes_canonicos(contenido), firma)
+        # La firma puede ser válida y aun así pertenecer a otro pedido:
+        # también se comprueba a qué ID y cliente corresponde
+        if contenido.get("pedido_id") != pedido_id or contenido.get("cliente") != cliente:
+            raise cripto.FirmaInvalida("El justificante es auténtico pero corresponde a otro pedido")
+        return contenido
+
+    def verificar_guardada(self, sesion, pedido_id):
+        registro = self._comprobar_acceso(sesion, pedido_id)
+        confirmacion = leer_json(self.ruta_confirmaciones).get(pedido_id)
+        if confirmacion is None:
+            raise ErrorPedido("Ese pedido todavía no tiene justificante")
+        return self.verificar(confirmacion, pedido_id, registro["cliente"])
+
+    def exportar(self, sesion, pedido_id):
+        # Se verifica antes de exportar para no entregar un justificante manipulado
+        self.verificar_guardada(sesion, pedido_id)
+        confirmacion = leer_json(self.ruta_confirmaciones)[pedido_id]
+        ruta = os.path.join(self.dir_justificantes, f"justificante_{pedido_id}.json")
+        guardar_json(ruta, confirmacion)
+        return os.path.abspath(ruta)
+
+    def verificar_fichero(self, sesion, ruta, pedido_id):
+        registro = self._comprobar_acceso(sesion, pedido_id)
+        try:
+            with open(ruta, "r", encoding="utf-8") as f:
+                confirmacion = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            raise ErrorPedido("No se puede leer el fichero del justificante")
+        return self.verificar(confirmacion, pedido_id, registro["cliente"])
