@@ -84,6 +84,7 @@ class BaseSweetSecure(unittest.TestCase):
         return pedido_id
 
 
+# Autenticación: contraseñas derivadas, sales independientes y rechazo de accesos inválidos
 class TestAutenticacion(BaseSweetSecure):
     def test_login_correcto(self):
         self.assertEqual(self.ana.username, "ana")
@@ -126,6 +127,8 @@ class TestAutenticacion(BaseSweetSecure):
             self.usuarios.registrar("../hack", PASS_LUIS)
 
 
+# Confidencialidad e integridad: se comprueba el descifrado autorizado
+# y el rechazo de alteraciones en ciphertext, tag, nonce y AAD
 class TestCifrado(BaseSweetSecure):
     def test_cifrado_y_descifrado_cliente_y_admin(self):
         pedido = tarta_ejemplo()
@@ -209,6 +212,8 @@ class TestCifrado(BaseSweetSecure):
         self.assertIsNone(self.pedidos.todos(self.admin)[0]["pedido"])
 
 
+# Firmas ECDSA: autenticidad del justificante, detección de cambios
+# y rechazo de firmas válidas reutilizadas en otros pedidos
 class TestFirma(BaseSweetSecure):
     def test_firma_y_verificacion_correctas(self):
         pedido_id = self.pedido_confirmado()
@@ -265,6 +270,8 @@ class TestFirma(BaseSweetSecure):
             self.pedidos.confirmar(self.admin, pedido_id)
 
 
+# Gestión de claves y autorización: un cliente no debe adquirir
+# privilegios de administrador por manipular el fichero de usuarios
 class TestClavesYPermisos(BaseSweetSecure):
     def test_claves_privadas_cifradas(self):
         for nombre in ("pasteleria_cifrado_priv.pem", "pasteleria_firma_priv.pem"):
@@ -307,6 +314,7 @@ class TestClavesYPermisos(BaseSweetSecure):
             self.usuarios.registrar("otroadmin", PASS_LUIS, rol=ROL_ADMIN)
 
 
+# Validaciones funcionales: impedir que se guarden pedidos fuera del catálogo
 class TestValidacionEntradas(BaseSweetSecure):
     def test_opciones_invalidas(self):
         with self.assertRaises(ErrorPedido):
@@ -342,6 +350,7 @@ class TestValidacionEntradas(BaseSweetSecure):
             self.pedidos.verificar_fichero(self.ana, ruta, pedido_id)
 
 
+# Pruebas de formato de entradas
 class TestCatalogoYCampos(BaseSweetSecure):
     def test_nuevas_coberturas_y_rellenos(self):
         self.assertEqual(len(CATALOGO["tarta"]["bizcocho"]), 6)
@@ -384,6 +393,7 @@ class TestAsistenteYSeleccion(BaseSweetSecure):
         main.configurar(self.dir)
 
     def ui(self, funcion, entradas, *args):
+        # Se simulan pulsaciones de teclado sin depender de una terminal interactiva
         with patch("builtins.input", side_effect=entradas), patch.object(interfaz, "limpiar"), \
                 patch.object(interfaz, "pausa"), redirect_stdout(io.StringIO()):
             return funcion(*args)
@@ -444,6 +454,8 @@ class TestAsistenteYSeleccion(BaseSweetSecure):
         self.assertEqual(self.pedidos.verificar_guardada(self.ana, pedido_id)["pedido_id"], pedido_id)
 
 
+# Persistencia: el estado CONFIRMADO depende de una firma verificable,
+# no de un texto que alguien pueda escribir en el JSON
 class TestEstadoYPersistencia(BaseSweetSecure):
     def test_persistencia_tras_reiniciar(self):
         pedido_id = self.pedido_confirmado()
@@ -490,6 +502,8 @@ class TestEstadoYPersistencia(BaseSweetSecure):
         self.assertFalse(self.pedidos.claves_coherentes(self.admin))
 
 
+# Exportación: se verifica la firma antes de entregar el fichero
+# y se impide consultar justificantes de otros usuarios
 class TestJustificantesYPermisos(BaseSweetSecure):
     def test_justificante_descargado_y_verificado(self):
         pedido_id = self.pedido_confirmado()
@@ -517,6 +531,7 @@ class TestJustificantesYPermisos(BaseSweetSecure):
             self.pedidos.claves_coherentes(self.ana)
 
 
+# El modo de demostración muestra parámetros técnicos, pero no secretos
 class TestModoDemostracion(BaseSweetSecure):
     def test_modo_demo_no_muestra_secretos(self):
         registro = []
