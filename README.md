@@ -1,29 +1,49 @@
-## SweetSecure
+# SweetSecure 🎂
 
-# Aplicación de gestión de pedidos para una pastelería, desarrollada en Python para la asignatura de Criptografía y Seguridad Informática. Incorpora autenticación de usuarios, cifrado de pedidos y firmas digitales para garantizar su integridad y autenticidad.
+Aplicación de gestión de pedidos para una pastelería, desarrollada en Python para la asignatura de Criptografía y Seguridad Informática. Incorpora autenticación de usuarios, cifrado de pedidos y firmas digitales para proteger la confidencialidad, integridad y autenticidad de la información.
 
-1. Preparación inicial -> Crear el entorno virtual (solo la primera vez):
-    ```python -m venv .venv```
+## 1. Preparación inicial
 
-Activar el entorno virtual (Windows / PowerShell):
-    ```.\.venv\Scripts\Activate.ps1```
+Abrir una terminal en la carpeta del proyecto.
 
-Instalar las dependencias:
-    ```python -m pip install -r requirements.txt```
+**Crear el entorno virtual (solo la primera vez):**
 
+```powershell
+python -m venv .venv
+```
 
-2. Ejecutar SweetSecure, con el entorno virtual activado:
+**Activar el entorno virtual (Windows / PowerShell):**
 
-    ```python main.py```
-    (En las siguientes ocasiones, solo será necesario activar el entorno virtual y ejecutar este comando)
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
 
+**Instalar las dependencias:**
 
-3. Ejecutar las pruebas automáticas
+```powershell
+python -m pip install -r requirements.txt
+```
 
-    ```python -m unittest discover -s tests -p "test_*.py" -v```
-    (Resultado comprobado: 60 pruebas superadas)
+## 2. Ejecutar SweetSecure
 
+Con el entorno virtual activado:
 
-4. Salir del entorno virtual
+```powershell
+python main.py
+```
 
-    ```deactivate```
+En las siguientes ocasiones, solo será necesario activar el entorno virtual y ejecutar este comando.
+
+## 3. Ejecutar las pruebas automáticas
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+**Resultado comprobado:** 60 pruebas superadas, sin fallos ni errores.
+
+## 4. Salir del entorno virtual
+
+```powershell
+deactivate
+```

@@ -519,7 +519,10 @@ def entrar_admin(sesion):
         ui.error("Las claves públicas guardadas no corresponden a las claves privadas de la pastelería.")
         ui.texto("Alguien podría haberlas sustituido. Restaura las claves públicas antes de seguir trabajando.")
         ui.pausa()
+        return
+    
     menu_admin(sesion)
+    
 
 
 # ---------- Menú principal ----------
