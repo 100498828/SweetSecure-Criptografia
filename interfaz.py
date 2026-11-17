@@ -78,3 +78,34 @@ def campo(etiqueta, valor, color=""):
 def log_tecnico(mensaje):
     print(TECNICO + "    " + mensaje + FIN)
 
+
+# Los estados de los pedidos se distinguen por colores:
+# amarillo para pendientes, verde para confirmados y rojo para errores
+def color_estado(estado):
+    return {"PENDIENTE": AVISO, "CONFIRMADO": OK}.get(estado, ERROR) + NEGRITA
+
+
+def pedir(etiqueta):
+    return input(f"\n  {etiqueta}\n  " + TITULO + NEGRITA + "› " + FIN).strip()
+
+
+def pausa():
+    input("\n  " + SUAVE + "Pulsa Enter para continuar..." + FIN)
+
+
+def menu(opciones):
+    # Muestra opciones numeradas y devuelve el índice elegido (empezando en 0)
+    print()
+    for i, opcion in enumerate(opciones, 1):
+        print(f"   {TITULO}{NEGRITA}{i}{FIN}  {opcion}")
+    while True:
+        valor = pedir("Elige una opción:")
+        if valor.isdigit() and 1 <= int(valor) <= len(opciones):
+            return int(valor) - 1
+        error(f"Escribe un número del 1 al {len(opciones)}")
+
+
+def ayuda_navegacion(volver=True):
+    extra = f"   {NEGRITA}V{FIN} volver atrás" if volver else ""
+    print(SUAVE + f"  {NEGRITA}0{FIN}{SUAVE} cancelar el pedido" + FIN + extra)
+
