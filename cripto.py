@@ -56,6 +56,7 @@ def bytes_canonicos(diccionario):
     return json.dumps(diccionario, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
+
 # ---------- Contraseñas y derivación de claves (PBKDF2) ----------
 
 def generar_sal():
@@ -91,6 +92,7 @@ def derivar_clave_cliente(password, sal, iteraciones):
     return clave
 
 
+
 # ---------- Cifrado autenticado (AES-GCM) ----------
 # AES-GCM proporciona confidencialidad mediante cifrado simétrico
 # e integridad y autenticación de los datos mediante un tag.
@@ -117,6 +119,7 @@ def descifrar_aes_gcm(clave, paquete, aad):
         raise ErrorIntegridad("Los datos cifrados no superan la verificación de integridad") from e
     log(f"AES-{len(clave) * 8}-GCM | tag verificado correctamente")
     return datos
+
 
 
 # ---------- Claves asimétricas de la pastelería ----------
@@ -186,6 +189,7 @@ def huella(clave_publica):
     return digest.finalize().hex()
 
 
+
 # ---------- Cifrado asimétrico (RSA-OAEP) para envolver claves ----------
 
 def _oaep():
@@ -208,3 +212,22 @@ def desenvolver_clave_rsa(clave_privada, envuelta_b64):
         raise ErrorIntegridad("La clave envuelta del pedido no es válida") from e
 
 
+
+# ---------- Firma digital (ECDSA P-256 + SHA-256) ----------
+
+# La pastelería firma con su clave privada. La firma permite comprobar
+# la integridad del justificante y autenticar su origen si se confía
+# en la clave pública utilizada para verificarla.
+def firmar(clave_privada, datos):
+    firma = clave_privada.sign(datos, ec.ECDSA(hashes.SHA256()))
+    log(f"Firma ECDSA {clave_privada.curve.name} + SHA-256 generada ({len(firma)} bytes DER)")
+    return a_b64(firma)
+
+
+def verificar_firma(clave_publica, datos, firma_b64):
+    try:
+        clave_publica.verify(de_b64(firma_b64), datos, ec.ECDSA(hashes.SHA256()))
+    except (InvalidSignature, ValueError, TypeError) as e:
+        log("Firma ECDSA INVÁLIDA, justificante rechazado")
+        raise FirmaInvalida("La firma no corresponde al contenido del justificante") from e
+    log(f"Firma ECDSA {clave_publica.curve.name} + SHA-256 verificada correctamente")
