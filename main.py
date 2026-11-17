@@ -426,3 +426,124 @@ def menu_cliente(sesion):
             return
         pantalla(accion, sesion)
 
+
+# ---------- Administradora ----------
+
+def ver_pedidos_clientes(sesion):
+    ui.cabecera("Pedidos de clientes")
+    lista = pedidos.todos(sesion)
+    pendientes = [p for p in lista if p["estado"] == PENDIENTE]
+    resto = [p for p in lista if p["estado"] != PENDIENTE]
+    if pendientes:
+        ui.aviso(f"{len(pendientes)} pedido(s) pendiente(s) de confirmar (se muestran primero)")
+    mostrar_pedidos(pendientes + resto, con_cliente=True)
+    ui.pausa()
+
+
+def confirmar_pedido(sesion):
+    ui.cabecera("Confirmar pedido")
+    pedido_id = elegir_pedido(pedidos.todos(sesion, PENDIENTE), "Pedidos pendientes", con_cliente=True,
+                              vacio="No hay pedidos pendientes de confirmar.")
+    if pedido_id and ejecutar(pedidos.confirmar, sesion, pedido_id):
+        ui.ok("Pedido confirmado y justificante firmado")
+        ui.texto("El cliente ya puede consultar y verificar su justificante.")
+    ui.pausa()
+
+
+def verificar_justificante_admin(sesion):
+    ui.cabecera("Verificar justificante de compra")
+    lista = [p for p in pedidos.todos(sesion) if p["estado"] in (CONFIRMADO, MANIPULADO)]
+    pedido_id = elegir_pedido(lista, "Pedidos con justificante", con_cliente=True,
+                              vacio="Todavía no hay pedidos confirmados.")
+    if pedido_id:
+        contenido = ejecutar(pedidos.verificar_guardada, sesion, pedido_id)
+        if contenido:
+            mostrar_justificante(contenido)
+    ui.pausa()
+
+
+def info_firma(sesion):
+    ui.cabecera("Información de firma digital")
+    info = pedidos.info_firma()
+    ui.seccion("CLAVE DE FIRMA (justificantes)")
+    ui.campo("Algoritmo", info["algoritmo_firma"])
+    ui.campo("Tamaño", f"{info['bits_firma']} bits")
+    ui.campo("Huella SHA-256", agrupar(info["huella_firma"]))
+    ui.seccion("CLAVE DE CIFRADO (claves de los pedidos)")
+    ui.campo("Algoritmo", info["algoritmo_cifrado"])
+    ui.campo("Tamaño", f"{info['bits_cifrado']} bits")
+    ui.campo("Huella SHA-256", agrupar(info["huella_cifrado"]))
+    ui.seccion("COMPROBACIÓN")
+    if pedidos.claves_coherentes(sesion):
+        ui.ok("Las claves públicas del disco corresponden a las claves privadas de la pastelería")
+    else:
+        ui.error("Las claves públicas del disco NO corresponden a las privadas: han sido sustituidas")
+    print()
+    ui.texto("Las claves privadas están cifradas con la contraseña de la administradora (PKCS#8) y nunca se "
+             "muestran. La huella permite a los clientes comparar la clave pública con la que publica la "
+             "pastelería, pero no es un certificado: no hay una autoridad que la vincule con su identidad.")
+    ui.pausa()
+
+
+def menu_admin(sesion):
+    acciones = [("Ver pedidos de clientes", ver_pedidos_clientes), ("Confirmar pedido", confirmar_pedido),
+                ("Verificar justificante de compra", verificar_justificante_admin),
+                ("Consultar información de firma digital", info_firma), ("Cerrar sesión", None)]
+    while True:
+        ui.cabecera(f"Área de administración · {sesion.username}", modo_actual())
+        pendientes = len(pedidos.todos(sesion, PENDIENTE))
+        if pendientes:
+            ui.aviso(f"Tienes {pendientes} pedido{'s' if pendientes > 1 else ''} pendiente"
+                     f"{'s' if pendientes > 1 else ''} de confirmar")
+        nombre, accion = acciones[ui.menu([a[0] for a in acciones])]
+        if accion is None:
+            return
+        pantalla(accion, sesion)
+
+
+def entrar_admin(sesion):
+    if not pedidos.claves_coherentes(sesion):
+        ui.cabecera("Alerta de seguridad")
+        ui.error("Las claves públicas guardadas no corresponden a las claves privadas de la pastelería.")
+        ui.texto("Alguien podría haberlas sustituido. Restaura las claves públicas antes de seguir trabajando.")
+        ui.pausa()
+    menu_admin(sesion)
+
+
+# ---------- Menú principal ----------
+
+def modo_actual():
+    return "[MODO DEMOSTRACIÓN CRIPTOGRÁFICA]" if cripto.DEBUG else ""
+
+
+def main():
+    activar_demo(os.environ.get("SWEETSECURE_DEMO") == "1")
+    try:
+        if not usuarios.existe_admin():
+            configuracion_inicial()
+        while True:
+            ui.cabecera("Bienvenido/a", modo_actual())
+            demo = "ACTIVADO" if cripto.DEBUG else "DESACTIVADO"
+            opcion = ui.menu(["Registrarse", "Iniciar sesión", f"Modo demostración criptográfica: {demo}", "Salir"])
+            if opcion == 0:
+                registrarse()
+            elif opcion == 1:
+                sesion = iniciar_sesion()
+                if sesion:
+                    pantalla(entrar_admin if sesion.rol == ROL_ADMIN else menu_cliente, sesion)
+                    # Se descarta la sesión al salir para no mantener claves en memoria más de lo necesario
+                    del sesion
+            elif opcion == 2:
+                activar_demo(not cripto.DEBUG)
+            else:
+                ui.limpiar()
+                print("\n  ¡Gracias por confiar en SweetSecure! Hasta pronto.\n")
+                return
+    except ErrorAlmacen as e:
+        ui.error(f"Error de datos: {e}")
+    except (KeyboardInterrupt, EOFError):
+        print("\n\n  Saliendo de SweetSecure.\n")
+
+
+if __name__ == "__main__":
+    main()
