@@ -359,3 +359,70 @@ def mostrar_justificante(contenido):
     ui.campo("Firma digital", "VÁLIDA (ECDSA P-256 + SHA-256)", ui.color_estado(CONFIRMADO))
     ui.campo("Huella de la clave", agrupar(pedidos.info_firma()["huella_firma"]))
 
+
+# ---------- Cliente ----------
+
+def consultar_justificante(sesion):
+    ui.cabecera("Consultar justificante de compra")
+    lista = [p for p in pedidos.mis_pedidos(sesion) if p["estado"] in (CONFIRMADO, MANIPULADO)]
+    pedido_id = elegir_pedido(lista, "Pedidos con justificante", vacio="Todavía no tienes pedidos confirmados.")
+    if pedido_id:
+        # La firma se verifica siempre antes de mostrar el justificante como válido
+        contenido = ejecutar(pedidos.verificar_guardada, sesion, pedido_id)
+        if contenido:
+            mostrar_justificante(contenido)
+    ui.pausa()
+
+
+def descargar_justificante(sesion):
+    ui.cabecera("Descargar justificante")
+    pedido_id = elegir_pedido(pedidos.mis_pedidos(sesion, CONFIRMADO), "Pedidos confirmados",
+                              vacio="Todavía no tienes pedidos confirmados.")
+    if pedido_id:
+        ruta = ejecutar(pedidos.exportar, sesion, pedido_id)
+        if ruta:
+            ui.ok("Justificante descargado")
+            ui.campo("Guardado en", ruta)
+            ui.texto("Es un fichero JSON con el contenido y su firma digital. Puedes comprobar su "
+                     "autenticidad más tarde con la opción 6.")
+    ui.pausa()
+
+
+def comprobar_autenticidad(sesion):
+    ui.cabecera("Comprobar autenticidad de un justificante")
+    ui.texto(f"Los justificantes descargados están en la carpeta: {os.path.abspath(pedidos.dir_justificantes)}")
+    ficheros = sorted(f for f in os.listdir(pedidos.dir_justificantes) if f.endswith(".json")) \
+        if os.path.isdir(pedidos.dir_justificantes) else []
+    opciones = ficheros + ["Escribir otra ruta"]
+    eleccion = ui.elegir_de_lista("Elige el justificante", opciones, str, "Selecciona el número de fichero:")
+    if eleccion is None:
+        return
+    ruta = ui.pedir("Ruta del fichero:") if eleccion == "Escribir otra ruta" \
+        else os.path.join(pedidos.dir_justificantes, eleccion)
+    pedido_id = elegir_pedido(pedidos.mis_pedidos(sesion), "¿A qué pedido corresponde este justificante?")
+    if pedido_id:
+        contenido = ejecutar(pedidos.verificar_fichero, sesion, ruta, pedido_id)
+        if contenido:
+            ui.ok("Justificante AUTÉNTICO: firmado por SweetSecure y sin modificaciones")
+            mostrar_justificante(contenido)
+    ui.pausa()
+
+
+def ver_mis_pedidos(sesion):
+    ui.cabecera("Mis pedidos")
+    mostrar_pedidos(pedidos.mis_pedidos(sesion))
+    ui.pausa()
+
+
+def menu_cliente(sesion):
+    acciones = [("Ver catálogo", ver_catalogo), ("Realizar nuevo pedido", nuevo_pedido),
+                ("Mis pedidos", ver_mis_pedidos), ("Consultar justificante de compra", consultar_justificante),
+                ("Descargar justificante", descargar_justificante),
+                ("Comprobar autenticidad de un justificante", comprobar_autenticidad), ("Cerrar sesión", None)]
+    while True:
+        ui.cabecera(f"Área de cliente · {sesion.username}", modo_actual())
+        nombre, accion = acciones[ui.menu([a[0] for a in acciones])]
+        if accion is None:
+            return
+        pantalla(accion, sesion)
+
