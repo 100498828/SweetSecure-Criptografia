@@ -1,4 +1,4 @@
-"""Operaciones criptográficas de SweetSecure."""
+"""Operaciones criptográficas de SweetSecure"""
 
 import base64
 import json
