@@ -186,3 +186,25 @@ def huella(clave_publica):
     return digest.finalize().hex()
 
 
+# ---------- Cifrado asimétrico (RSA-OAEP) para envolver claves ----------
+
+def _oaep():
+    return padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+
+
+# Cifrado híbrido: RSA protege la clave AES del pedido, en lugar
+# de cifrar directamente todo su contenido, que se cifra con AES-GCM.
+def envolver_clave_rsa(clave_publica, clave):
+    envuelta = clave_publica.encrypt(clave, _oaep())
+    log(f"Clave del pedido envuelta con RSA-{clave_publica.key_size}-OAEP-SHA256")
+    return a_b64(envuelta)
+
+
+def desenvolver_clave_rsa(clave_privada, envuelta_b64):
+    try:
+        return clave_privada.decrypt(de_b64(envuelta_b64), _oaep())
+    except (ValueError, TypeError) as e:
+        log("RSA-OAEP: no se ha podido desenvolver la clave, datos rechazados")
+        raise ErrorIntegridad("La clave envuelta del pedido no es válida") from e
+
+
