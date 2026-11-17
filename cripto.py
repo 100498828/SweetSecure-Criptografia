@@ -89,3 +89,100 @@ def derivar_clave_cliente(password, sal, iteraciones):
     clave = _pbkdf2(password, sal, iteraciones).derive(password.encode("utf-8"))
     log(f"Clave del cliente derivada con PBKDF2 (AES-{len(clave) * 8}), no se almacena")
     return clave
+
+
+# ---------- Cifrado autenticado (AES-GCM) ----------
+# AES-GCM proporciona confidencialidad mediante cifrado simétrico
+# e integridad y autenticación de los datos mediante un tag.
+def generar_clave_aes():
+    return AESGCM.generate_key(bit_length=CLAVE_AES_BITS)
+
+
+def cifrar_aes_gcm(clave, datos, aad):
+    # Nonce aleatorio nuevo en cada cifrado: nunca se repite un par (clave, nonce)
+    nonce = os.urandom(NONCE_BYTES)
+    cifrado = AESGCM(clave).encrypt(nonce, datos, aad)
+    log(f"AES-{len(clave) * 8}-GCM | nonce {nonce.hex()} | tag 128 bits | "
+        f"cifrado {cifrado[:12].hex()}... ({len(cifrado)} bytes)")
+    return {"nonce": a_b64(nonce), "cifrado": a_b64(cifrado)}
+
+
+def descifrar_aes_gcm(clave, paquete, aad):
+    try:
+        nonce = de_b64(paquete["nonce"])
+        cifrado = de_b64(paquete["cifrado"])
+        datos = AESGCM(clave).decrypt(nonce, cifrado, aad)
+    except (InvalidTag, KeyError, ValueError, TypeError) as e:
+        log("AES-GCM: verificación del tag FALLIDA, datos rechazados")
+        raise ErrorIntegridad("Los datos cifrados no superan la verificación de integridad") from e
+    log(f"AES-{len(clave) * 8}-GCM | tag verificado correctamente")
+    return datos
+
+
+# ---------- Claves asimétricas de la pastelería ----------
+
+def _guardar_privada(clave, ruta, password):
+    pem = clave.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        # Se cifra la clave privada con la contraseña del administrador
+        encryption_algorithm=serialization.BestAvailableEncryption(password.encode("utf-8")),
+    )
+    # Se crea el fichero con permisos 0600 (solo el propietario puede leerlo)
+    descriptor = os.open(ruta, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "wb") as f:
+        f.write(pem)
+
+
+def _guardar_publica(clave, ruta):
+    pem = clave.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    with open(ruta, "wb") as f:
+        f.write(pem)
+
+
+def generar_claves_pasteleria(directorio, password):
+    # Se usan dos pares distintos: RSA solo para cifrar y ECDSA solo para firmar
+    os.makedirs(directorio, exist_ok=True)
+
+    clave_rsa = rsa.generate_private_key(public_exponent=65537, key_size=RSA_BITS)
+    _guardar_privada(clave_rsa, os.path.join(directorio, "pasteleria_cifrado_priv.pem"), password)
+    _guardar_publica(clave_rsa.public_key(), os.path.join(directorio, "pasteleria_cifrado_pub.pem"))
+    log(f"Par RSA-{RSA_BITS} generado para cifrado (OAEP), privada protegida con PKCS#8 cifrado")
+
+    clave_ec = ec.generate_private_key(CURVA_FIRMA)
+    _guardar_privada(clave_ec, os.path.join(directorio, "pasteleria_firma_priv.pem"), password)
+    _guardar_publica(clave_ec.public_key(), os.path.join(directorio, "pasteleria_firma_pub.pem"))
+    log(f"Par ECDSA {CURVA_FIRMA.name} generado para firma, privada protegida con PKCS#8 cifrado")
+
+
+def cargar_clave_privada(ruta, password):
+    try:
+        with open(ruta, "rb") as f:
+            return serialization.load_pem_private_key(f.read(), password=password.encode("utf-8"))
+    except (ValueError, TypeError, OSError) as e:
+        raise ErrorClave("No se ha podido descifrar la clave privada") from e
+
+
+def cargar_clave_publica(ruta):
+    try:
+        with open(ruta, "rb") as f:
+            return serialization.load_pem_public_key(f.read())
+    except (ValueError, OSError) as e:
+        raise ErrorClave("No se ha podido cargar la clave pública") from e
+
+
+def huella(clave_publica):
+    # Huella SHA-256 de la clave pública: permite compararla con la publicada por la pastelería,
+    # pero no es un certificado (nadie de confianza la vincula con una identidad)
+    der = clave_publica.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    digest = hashes.Hash(hashes.SHA256())
+    digest.update(der)
+    return digest.finalize().hex()
+
+
