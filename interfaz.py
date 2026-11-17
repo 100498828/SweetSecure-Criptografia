@@ -109,3 +109,53 @@ def ayuda_navegacion(volver=True):
     extra = f"   {NEGRITA}V{FIN} volver atrás" if volver else ""
     print(SUAVE + f"  {NEGRITA}0{FIN}{SUAVE} cancelar el pedido" + FIN + extra)
 
+
+def elegir(etiqueta, opciones, volver=True):
+    # Elige una opción numerada: 0 cancela y V vuelve atrás
+    seccion(etiqueta)
+    for i, opcion in enumerate(opciones, 1):
+        print(f"   {TITULO}{NEGRITA}{i:>2}{FIN}  {opcion}")
+    print()
+    ayuda_navegacion(volver)
+    while True:
+        valor = pedir("Elige una opción:").upper()
+        if valor == CANCELAR:
+            raise Cancelado()
+        if valor == VOLVER and volver:
+            raise Volver()
+        if valor.isdigit() and 1 <= int(valor) <= len(opciones):
+            return opciones[int(valor) - 1]
+        error(f"Escribe un número del 1 al {len(opciones)}")
+
+
+def preguntar(etiqueta, validar, explicacion="", volver=True):
+    # Pide un dato y lo repite hasta que la función validar lo acepte, sin perder lo anterior
+    seccion(etiqueta)
+    if explicacion:
+        texto(explicacion)
+    ayuda_navegacion(volver)
+    while True:
+        valor = pedir("Escribe tu respuesta:")
+        if valor == CANCELAR:
+            raise Cancelado()
+        if valor.upper() == VOLVER and volver:
+            raise Volver()
+        try:
+            return validar(valor)
+        except ValueError as e:
+            error(str(e))
+
+
+def elegir_de_lista(etiqueta, elementos, describir, pregunta="Selecciona el número de pedido:"):
+    # Lista numerada de elementos; devuelve el elegido o None si se pulsa 0
+    seccion(etiqueta)
+    for i, elemento in enumerate(elementos, 1):
+        print(f"   {TITULO}{NEGRITA}{i:>2}{FIN}  {describir(elemento)}")
+    print(SUAVE + f"\n  {NEGRITA}0{FIN}{SUAVE} volver al menú" + FIN)
+    while True:
+        valor = pedir(pregunta)
+        if valor == "0":
+            return None
+        if valor.isdigit() and 1 <= int(valor) <= len(elementos):
+            return elementos[int(valor) - 1]
+        error(f"Escribe un número del 1 al {len(elementos)}, o 0 para volver")
