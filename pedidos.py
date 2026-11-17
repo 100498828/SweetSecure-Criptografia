@@ -41,6 +41,7 @@ ERROR_INTEGRIDAD = "ERROR DE INTEGRIDAD"
 
 class ErrorPedido(ValueError):
     # Dato del pedido no válido (hereda de ValueError para poder pedirlo de nuevo)
+    pass
 
 
 class ErrorPermisos(Exception):
