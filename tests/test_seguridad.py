@@ -124,3 +124,87 @@ class TestAutenticacion(BaseSweetSecure):
     def test_username_invalido_rechazado(self):
         with self.assertRaises(ErrorUsuario):
             self.usuarios.registrar("../hack", PASS_LUIS)
+
+
+class TestCifrado(BaseSweetSecure):
+    def test_cifrado_y_descifrado_cliente_y_admin(self):
+        pedido = tarta_ejemplo()
+        pedido_id = self.pedidos.crear(self.ana, pedido)
+        item_ana = self.pedidos.mis_pedidos(self.ana)[0]
+        self.assertIsNone(item_ana["error"])
+        self.assertEqual(item_ana["pedido"], pedido)
+        item_admin = [p for p in self.pedidos.todos(self.admin) if p["id"] == pedido_id][0]
+        self.assertEqual(item_admin["pedido"], pedido)
+
+    def test_pedido_no_se_guarda_en_claro(self):
+        self.pedidos.crear(self.ana, tarta_ejemplo())
+        contenido = self.texto("pedidos.json")
+        self.assertNotIn("Caramelo salado", contenido)
+        self.assertNotIn("Feliz cumple", contenido)
+
+    def test_nonces_y_claves_distintos_para_el_mismo_pedido(self):
+        id1 = self.pedidos.crear(self.ana, tarta_ejemplo())
+        id2 = self.pedidos.crear(self.ana, tarta_ejemplo())
+        datos = leer_json(self.ruta("pedidos.json"))
+        self.assertNotEqual(datos[id1]["datos"]["nonce"], datos[id2]["datos"]["nonce"])
+        self.assertNotEqual(datos[id1]["datos"]["cifrado"], datos[id2]["datos"]["cifrado"])
+
+    def _manipular(self, campo, subcampo):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        datos = leer_json(self.ruta("pedidos.json"))
+        datos[pedido_id][campo][subcampo] = modificar_b64(datos[pedido_id][campo][subcampo])
+        guardar_json(self.ruta("pedidos.json"), datos)
+        return pedido_id
+
+    def test_cifrado_modificado_rechazado(self):
+        self._manipular("datos", "cifrado")
+        item = self.pedidos.mis_pedidos(self.ana)[0]
+        self.assertIsNone(item["pedido"])
+        self.assertIsNotNone(item["error"])
+
+    def test_tag_modificado_rechazado(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        datos = leer_json(self.ruta("pedidos.json"))
+        # El tag de GCM son los últimos 16 bytes del texto cifrado
+        cifrado = bytearray(cripto.de_b64(datos[pedido_id]["datos"]["cifrado"]))
+        cifrado[-1] ^= 0x01
+        datos[pedido_id]["datos"]["cifrado"] = cripto.a_b64(bytes(cifrado))
+        guardar_json(self.ruta("pedidos.json"), datos)
+        self.assertIsNone(self.pedidos.mis_pedidos(self.ana)[0]["pedido"])
+
+    def test_nonce_modificado_rechazado(self):
+        self._manipular("datos", "nonce")
+        self.assertIsNone(self.pedidos.mis_pedidos(self.ana)[0]["pedido"])
+
+    def test_intercambio_entre_pedidos_rechazado(self):
+        id1 = self.pedidos.crear(self.ana, tarta_ejemplo())
+        id2 = self.pedidos.crear(self.ana, construir_caja("cupcakes", "Limón", 6, fecha_valida()))
+        datos = leer_json(self.ruta("pedidos.json"))
+        # Se copia el pedido cifrado y la clave del pedido 1 dentro del pedido 2 (ataque de cortar y pegar)
+        datos[id2]["datos"] = datos[id1]["datos"]
+        datos[id2]["clave_cliente"] = datos[id1]["clave_cliente"]
+        guardar_json(self.ruta("pedidos.json"), datos)
+        resultado = {p["id"]: p for p in self.pedidos.mis_pedidos(self.ana)}
+        self.assertIsNotNone(resultado[id1]["pedido"])
+        self.assertIsNone(resultado[id2]["pedido"])
+
+    def test_cambiar_cliente_del_pedido_rechazado(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        datos = leer_json(self.ruta("pedidos.json"))
+        datos[pedido_id]["cliente"] = "luis"
+        guardar_json(self.ruta("pedidos.json"), datos)
+        item = [p for p in self.pedidos.todos(self.admin) if p["id"] == pedido_id][0]
+        self.assertIsNone(item["pedido"])
+
+    def test_clave_incorrecta_rechazada(self):
+        with self.assertRaises(cripto.ErrorIntegridad):
+            paquete = cripto.cifrar_aes_gcm(cripto.generar_clave_aes(), b"pedido", b"aad")
+            cripto.descifrar_aes_gcm(cripto.generar_clave_aes(), paquete, b"aad")
+
+    def test_clave_envuelta_rsa_modificada_rechazada(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        datos = leer_json(self.ruta("pedidos.json"))
+        datos[pedido_id]["clave_pasteleria"] = modificar_b64(datos[pedido_id]["clave_pasteleria"])
+        guardar_json(self.ruta("pedidos.json"), datos)
+        self.assertIsNone(self.pedidos.todos(self.admin)[0]["pedido"])
+
