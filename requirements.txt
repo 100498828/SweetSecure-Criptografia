@@ -1,4 +1,4 @@
-"""Dependencias del proyecto"""
+# Dependencias del proyecto
 
 # Para instalar todas las dependencias: python -m pip install -r requirements.txt
 
