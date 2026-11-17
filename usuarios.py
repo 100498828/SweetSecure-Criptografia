@@ -100,4 +100,40 @@ class GestorUsuarios:
             cripto.generar_claves_pasteleria(self.dir_claves, password)
         guardar_json(self.ruta, usuarios)
 
-    
+
+    def autenticar(self, username, password):
+        usuarios = leer_json(self.ruta)
+        datos = usuarios.get(username)
+
+        # Se realiza igualmente una derivación PBKDF2 para reducir
+        # las diferencias de tiempo entre usuarios existentes e inexistentes
+        if datos is None:
+            # Se calcula un hash igualmente para que el tiempo de respuesta no revele si el usuario existe
+            cripto.verificar_password(password, b"\x00" * cripto.SAL_BYTES, b"\x00" * 32,
+                                      cripto.PBKDF2_ITERACIONES)
+            raise ErrorAutenticacion("Usuario o contraseña incorrectos")
+
+        # Se verifica la contraseña comparándola con el valor derivado
+        # almacenado, sin necesitar recuperar la contraseña original
+        if not cripto.verificar_password(password, cripto.de_b64(datos["sal_login"]),
+                                         cripto.de_b64(datos["hash"]), datos["iteraciones"]):
+            raise ErrorAutenticacion("Usuario o contraseña incorrectos")
+
+        sesion = Sesion(username=username, rol=datos["rol"])
+        if datos["rol"] == ROL_ADMIN:
+            # Además de verificar la contraseña, se deben desbloquear las claves privadas del administrador para poder operar
+            try:
+                sesion.clave_rsa = cripto.cargar_clave_privada(
+                    os.path.join(self.dir_claves, "pasteleria_cifrado_priv.pem"), password)
+                sesion.clave_firma = cripto.cargar_clave_privada(
+                    os.path.join(self.dir_claves, "pasteleria_firma_priv.pem"), password)
+            except cripto.ErrorClave as e:
+                raise ErrorAutenticacion("No se pueden desbloquear las claves de la pastelería") from e
+        else:
+            # La clave AES del cliente se deriva al iniciar sesión,
+            # no se almacena directamente en el fichero de usuarios.
+            sesion.clave_cliente = cripto.derivar_clave_cliente(
+                password, cripto.de_b64(datos["sal_cifrado"]), datos["iteraciones"])
+
+            
+        return sesion
