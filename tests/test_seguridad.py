@@ -208,3 +208,59 @@ class TestCifrado(BaseSweetSecure):
         guardar_json(self.ruta("pedidos.json"), datos)
         self.assertIsNone(self.pedidos.todos(self.admin)[0]["pedido"])
 
+
+class TestFirma(BaseSweetSecure):
+    def test_firma_y_verificacion_correctas(self):
+        pedido_id = self.pedido_confirmado()
+        contenido = self.pedidos.verificar_guardada(self.ana, pedido_id)
+        self.assertEqual(contenido["pedido_id"], pedido_id)
+        self.assertEqual(contenido["estado"], "CONFIRMADO")
+
+    def test_confirmacion_alterada_rechazada(self):
+        pedido_id = self.pedido_confirmado()
+        ruta = self.pedidos.exportar(self.ana, pedido_id)
+        confirmacion = leer_json(ruta)
+        confirmacion["contenido"]["total_eur"] = 1.0
+        guardar_json(ruta, confirmacion)
+        with self.assertRaises(cripto.FirmaInvalida):
+            self.pedidos.verificar_fichero(self.ana, ruta, pedido_id)
+
+    def test_firma_modificada_rechazada(self):
+        pedido_id = self.pedido_confirmado()
+        confirmaciones = leer_json(self.ruta("confirmaciones.json"))
+        confirmaciones[pedido_id]["firma"] = modificar_b64(confirmaciones[pedido_id]["firma"])
+        guardar_json(self.ruta("confirmaciones.json"), confirmaciones)
+        with self.assertRaises(cripto.FirmaInvalida):
+            self.pedidos.verificar_guardada(self.ana, pedido_id)
+
+    def test_firma_con_otra_clave_rechazada(self):
+        pedido_id = self.pedido_confirmado()
+        confirmaciones = leer_json(self.ruta("confirmaciones.json"))
+        contenido = confirmaciones[pedido_id]["contenido"]
+        otra_clave = cripto.ec.generate_private_key(cripto.CURVA_FIRMA)
+        confirmaciones[pedido_id]["firma"] = cripto.firmar(otra_clave, cripto.bytes_canonicos(contenido))
+        guardar_json(self.ruta("confirmaciones.json"), confirmaciones)
+        with self.assertRaises(cripto.FirmaInvalida):
+            self.pedidos.verificar_guardada(self.ana, pedido_id)
+
+    def test_confirmacion_reutilizada_en_otro_pedido_rechazada(self):
+        id_confirmado = self.pedido_confirmado()
+        id_pendiente = self.pedidos.crear(self.ana, tarta_ejemplo())
+        ruta = self.pedidos.exportar(self.ana, id_confirmado)
+        # La firma es válida, pero corresponde a otro pedido: es un intento de repetición
+        with self.assertRaises(cripto.FirmaInvalida):
+            self.pedidos.verificar_fichero(self.ana, ruta, id_pendiente)
+
+    def test_confirmacion_no_se_firma_dos_veces(self):
+        pedido_id = self.pedido_confirmado()
+        with self.assertRaises(ErrorPedido):
+            self.pedidos.confirmar(self.admin, pedido_id)
+
+    def test_no_se_firma_pedido_manipulado(self):
+        pedido_id = self.pedidos.crear(self.ana, tarta_ejemplo())
+        datos = leer_json(self.ruta("pedidos.json"))
+        datos[pedido_id]["datos"]["cifrado"] = modificar_b64(datos[pedido_id]["datos"]["cifrado"])
+        guardar_json(self.ruta("pedidos.json"), datos)
+        with self.assertRaises(cripto.ErrorIntegridad):
+            self.pedidos.confirmar(self.admin, pedido_id)
+
