@@ -65,13 +65,13 @@ def generar_sal():
 # PBKDF2 aplica repetidamente HMAC-SHA256 para dificultar los ataques
 # de fuerza bruta sobre contraseñas. La sal evita resultados idénticos
 # cuando dos usuarios tienen la misma contraseña.
-def _pbkdf2(password, sal, iteraciones):
+def _pbkdf2(sal, iteraciones):
     return PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=sal, iterations=iteraciones)
 
 
 def hash_password(password, sal, iteraciones=None):
     iteraciones = iteraciones or PBKDF2_ITERACIONES
-    resultado = _pbkdf2(password, sal, iteraciones).derive(password.encode("utf-8"))
+    resultado = _pbkdf2(sal, iteraciones).derive(password.encode("utf-8"))
     log(f"PBKDF2-HMAC-SHA256 | {iteraciones} iteraciones | sal {len(sal) * 8} bits | salida 256 bits")
     return resultado
 
@@ -79,7 +79,7 @@ def hash_password(password, sal, iteraciones=None):
 def verificar_password(password, sal, hash_guardado, iteraciones):
     # verify() compara en tiempo constante, evitando ataques de temporización
     try:
-        _pbkdf2(password, sal, iteraciones).verify(password.encode("utf-8"), hash_guardado)
+        _pbkdf2(sal, iteraciones).verify(password.encode("utf-8"), hash_guardado)
         return True
     except Exception:
         return False
@@ -87,7 +87,7 @@ def verificar_password(password, sal, hash_guardado, iteraciones):
 
 def derivar_clave_cliente(password, sal, iteraciones):
     # Se usa una sal distinta a la del login para que la clave de cifrado no coincida con el hash guardado
-    clave = _pbkdf2(password, sal, iteraciones).derive(password.encode("utf-8"))
+    clave = _pbkdf2(sal, iteraciones).derive(password.encode("utf-8"))
     log(f"Clave del cliente derivada con PBKDF2 (AES-{len(clave) * 8}), no se almacena")
     return clave
 
